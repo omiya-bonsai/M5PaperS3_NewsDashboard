@@ -2,7 +2,6 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <M5Unified.h>
-#include <esp_sleep.h>
 #include <math.h>
 #include <string.h>
 #include <time.h>
@@ -46,10 +45,8 @@ static constexpr uint32_t REFRESH_MS_MID  = 30UL * 60UL * 1000UL;
 static constexpr uint32_t REFRESH_MS_LOW  = 60UL * 60UL * 1000UL;
 static constexpr uint32_t REFRESH_MS_CRITICAL = 120UL * 60UL * 1000UL;
 
-static constexpr uint32_t IDLE_SLEEP_MS = 90UL * 1000UL;
-static constexpr uint32_t IMMEDIATE_SLEEP_GRACE_MS = 1200UL;
-static constexpr uint32_t USER_WAKE_IDLE_SLEEP_MS = 45UL * 1000UL;
-static constexpr uint32_t BUTTON_WAKE_IDLE_SLEEP_MS = 60UL * 1000UL;
+static constexpr uint32_t IDLE_WAIT_MS = 90UL * 1000UL;
+static constexpr uint32_t LOOP_WAIT_MS = 80UL;
 
 // ジャイロ / 加速度で持ち上げ判定
 static constexpr float LIFT_ACCEL_DELTA_THRESHOLD = 0.18f;
@@ -130,7 +127,7 @@ struct WakeContext {
 
 struct PowerPolicy {
   uint32_t wakeIntervalMs = REFRESH_MS_MID;
-  uint32_t idleSleepMs = IDLE_SLEEP_MS;
+  uint32_t idleSleepMs = IDLE_WAIT_MS;
   bool allowAutoUpdate = true;
   bool allowInteractiveNetwork = true;
   bool keepAwake = true;
@@ -184,8 +181,6 @@ String lastKnownIndexVersion = "";
 
 WakeContext currentWakeContext;
 PowerPolicy currentPolicy;
-esp_sleep_wakeup_cause_t rawWakeupCause = ESP_SLEEP_WAKEUP_UNDEFINED;
-
 void drawStatus(const String& msg) {
   M5.Display.fillScreen(TFT_WHITE);
   M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
@@ -953,28 +948,6 @@ bool isShortTap(int dx, int dy) {
   return (abs(dx) <= TAP_THRESHOLD_X && abs(dy) <= TAP_THRESHOLD_Y);
 }
 
-const char* getWakeReasonLabel(WakeReason reason) {
-  switch (reason) {
-    case WakeReason::ColdBoot:
-      return "coldboot";
-    case WakeReason::Timer:
-      return "timer";
-    case WakeReason::Button:
-      return "button";
-    case WakeReason::Touch:
-      return "touch";
-    default:
-      return "unknown";
-  }
-}
-
-bool isPhysicalWakeButtonActive() {
-  return M5.BtnPWR.isPressed()
-      || M5.BtnPWR.wasPressed()
-      || M5.BtnPWR.wasClicked()
-      || M5.BtnPWR.wasHold();
-}
-
 bool isBottomEdgeStart(int y) {
   return y >= (M5.Display.height() - BOTTOM_EDGE_ZONE_H);
 }
@@ -1062,31 +1035,23 @@ void handleTouchInput() {
   }
 }
 
-WakeReason getWakeReason() {
-  rawWakeupCause = esp_sleep_get_wakeup_cause();
-
-  switch (rawWakeupCause) {
-    case ESP_SLEEP_WAKEUP_TIMER:
-      return WakeReason::Timer;
-    case ESP_SLEEP_WAKEUP_TOUCHPAD:
-    case ESP_SLEEP_WAKEUP_EXT0:
-    case ESP_SLEEP_WAKEUP_EXT1:
-    case ESP_SLEEP_WAKEUP_GPIO:
-      if (isPhysicalWakeButtonActive()) {
-        return WakeReason::Button;
-      }
-      return WakeReason::Touch;
-    case ESP_SLEEP_WAKEUP_UNDEFINED:
-      if (isPhysicalWakeButtonActive()) {
-        return WakeReason::Button;
-      }
-      return WakeReason::ColdBoot;
+const char* getWakeReasonLabel(WakeReason reason) {
+  switch (reason) {
+    case WakeReason::ColdBoot:
+      return "boot";
+    case WakeReason::Timer:
+      return "timer";
+    case WakeReason::Button:
+      return "button";
+    case WakeReason::Touch:
+      return "touch";
     default:
-      if (isPhysicalWakeButtonActive()) {
-        return WakeReason::Button;
-      }
-      return WakeReason::Unknown;
+      return "unknown";
   }
+}
+
+WakeReason getWakeReason() {
+  return WakeReason::ColdBoot;
 }
 
 float max3(float a, float b, float c) {
@@ -1136,15 +1101,12 @@ bool detectLiftEvent() {
 PowerPolicy decidePowerPolicy(const WakeContext& ctx) {
   PowerPolicy policy;
   policy.allowInteractiveNetwork = !(ctx.batteryProfile == BatteryProfile::Critical && !ctx.usbPowered);
-  bool userWake = (ctx.reason == WakeReason::Touch);
-  bool buttonWake = (ctx.reason == WakeReason::Button);
 
   if (ctx.usbPowered) {
     policy.wakeIntervalMs = REFRESH_MS_HIGH;
     policy.allowAutoUpdate = true;
     policy.keepAwake = true;
-    policy.idleSleepMs = buttonWake ? BUTTON_WAKE_IDLE_SLEEP_MS
-                                    : (userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS);
+    policy.idleSleepMs = IDLE_WAIT_MS;
     policy.statusCode = "USB";
     policy.reasonText = "usb-powered";
     return policy;
@@ -1154,64 +1116,22 @@ PowerPolicy decidePowerPolicy(const WakeContext& ctx) {
     policy.wakeIntervalMs = REFRESH_MS_CRITICAL;
     policy.allowAutoUpdate = false;
     policy.allowInteractiveNetwork = false;
-    policy.keepAwake = buttonWake;
-    policy.idleSleepMs = buttonWake ? BUTTON_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS;
-    policy.statusCode = buttonWake ? "BTN" : "BCRIT";
-    policy.reasonText = buttonWake ? "button-critical" : "critical-battery";
+    policy.keepAwake = true;
+    policy.idleSleepMs = IDLE_WAIT_MS;
+    policy.statusCode = "BCRIT";
+    policy.reasonText = "critical-battery";
     return policy;
   }
 
   policy.wakeIntervalMs = (ctx.batteryProfile == BatteryProfile::Low) ? REFRESH_MS_LOW : REFRESH_MS_MID;
-  policy.idleSleepMs = buttonWake ? BUTTON_WAKE_IDLE_SLEEP_MS
-                                  : (userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS);
-
-  if (!buttonWake && !userWake && ctx.reason == WakeReason::Timer && !ctx.motionDetected) {
-    policy.allowAutoUpdate = false;
-    policy.keepAwake = false;
-    policy.statusCode = "SLEEP";
-    policy.reasonText = "timer-no-motion";
-    return policy;
-  }
+  policy.idleSleepMs = IDLE_WAIT_MS;
 
   policy.allowAutoUpdate = policy.allowInteractiveNetwork;
   policy.keepAwake = true;
-
-  if (ctx.reason == WakeReason::Button) {
-    policy.statusCode = "BTN";
-    policy.reasonText = "button-wake";
-  } else if (ctx.reason == WakeReason::Timer) {
-    policy.statusCode = "WAKE";
-    policy.reasonText = "timer-motion";
-  } else if (ctx.reason == WakeReason::Touch) {
-    policy.statusCode = "TOUCH";
-    policy.reasonText = "touch-wake";
-  } else if (ctx.reason == WakeReason::ColdBoot) {
-    policy.statusCode = "BOOT";
-    policy.reasonText = "cold-boot";
-  } else {
-    policy.statusCode = "BOOT";
-    policy.reasonText = "other-wake";
-  }
+  policy.statusCode = "RUN";
+  policy.reasonText = "always-on";
 
   return policy;
-}
-
-void enterTimedSleep(const char* reason) {
-  uint32_t sleepMs = currentPolicy.wakeIntervalMs;
-  if (sleepMs == 0) {
-    sleepMs = REFRESH_MS_LOW;
-  }
-
-  Serial.printf("Entering deep sleep: reason=%s next=%lu ms\n",
-                reason,
-                static_cast<unsigned long>(sleepMs));
-
-  disconnectWiFi();
-  delay(50);
-  M5.Power.deepSleep(static_cast<uint64_t>(sleepMs) * 1000ULL, true);
-  while (true) {
-    delay(1000);
-  }
 }
 
 void renderCachedIndexIfAvailable() {
@@ -1224,16 +1144,14 @@ void runWakeFlow() {
   currentWakeContext.reason = getWakeReason();
   currentWakeContext.usbPowered = isUsbPoweredNow();
   currentWakeContext.batteryProfile = getBatteryProfile();
-  currentWakeContext.motionDetected = currentWakeContext.usbPowered || detectLiftEvent();
+  currentWakeContext.motionDetected = true;
   currentPolicy = decidePowerPolicy(currentWakeContext);
   lastStatusText = String(currentPolicy.statusCode);
-  bool buttonWake = (currentWakeContext.reason == WakeReason::Button);
 
   Serial.printf(
-    "WakeFlow: boot=%lu reason=%s raw=%d usb=%s motion=%s battery=%d policy=%s interval=%lu idle=%lu\n",
+    "RunFlow: boot=%lu reason=%s usb=%s motion=%s battery=%d policy=%s interval=%lu idle=%lu\n",
     static_cast<unsigned long>(rtcBootCount),
     getWakeReasonLabel(currentWakeContext.reason),
-    static_cast<int>(rawWakeupCause),
     currentWakeContext.usbPowered ? "true" : "false",
     currentWakeContext.motionDetected ? "true" : "false",
     static_cast<int>(currentWakeContext.batteryProfile),
@@ -1245,10 +1163,6 @@ void runWakeFlow() {
   bool haveIndexCache = SD.exists(PAGE_CACHE_PATHS[0]);
   if (haveIndexCache) {
     renderCachedIndexIfAvailable();
-    if (buttonWake) {
-      lastStatusText = "READY";
-      drawOverlayStatusBar();
-    }
   }
 
   if (!haveIndexCache && currentPolicy.allowInteractiveNetwork) {
@@ -1257,13 +1171,13 @@ void runWakeFlow() {
   }
 
   if (currentPolicy.allowAutoUpdate) {
-    if (!buttonWake || !haveIndexCache) {
+    if (!haveIndexCache) {
       drawStatus("Checking updates...");
     } else {
-      Serial.println("Button wake: keep cached index visible during refresh");
+      Serial.println("Keep cached index visible during refresh");
     }
     if (!loadPage(0, true, false)) {
-      Serial.println("Wake flow update failed");
+      Serial.println("Run flow update failed");
       if (!pageLoaded && haveIndexCache) {
         renderCachedIndexIfAvailable();
       }
@@ -1275,15 +1189,10 @@ void runWakeFlow() {
     lastStatusText = String(currentPolicy.statusCode);
     drawOverlayStatusBar();
   } else {
-    drawStatus("No cache. Sleeping...");
+    drawStatus("No cache. Waiting...");
   }
 
   noteUserActivity();
-
-  if (!currentPolicy.keepAwake) {
-    delay(IMMEDIATE_SLEEP_GRACE_MS);
-    enterTimedSleep(currentPolicy.reasonText);
-  }
 }
 
 void setup() {
@@ -1328,9 +1237,10 @@ void loop() {
   }
 
   if (pageLoaded && (millis() - lastUserActivityMs >= currentPolicy.idleSleepMs)) {
-    delay(150);
-    enterTimedSleep("idle-timeout");
+    lastStatusText = "IDLE";
+    drawOverlayStatusBar();
+    lastUserActivityMs = millis();
   }
 
-  delay(20);
+  delay(LOOP_WAIT_MS);
 }
