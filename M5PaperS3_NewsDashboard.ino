@@ -47,6 +47,7 @@ static constexpr uint32_t REFRESH_MS_CRITICAL = 120UL * 60UL * 1000UL;
 
 static constexpr uint32_t IDLE_WAIT_MS = 90UL * 1000UL;
 static constexpr uint32_t LOOP_WAIT_MS = 80UL;
+static constexpr uint32_t BACKGROUND_REFRESH_IDLE_GRACE_MS = 20UL * 1000UL;
 
 // ジャイロ / 加速度で持ち上げ判定
 static constexpr float LIFT_ACCEL_DELTA_THRESHOLD = 0.18f;
@@ -152,6 +153,7 @@ int touchStartY = 0;
 // 状態管理
 bool pageLoaded = false;
 uint32_t lastRefreshMs = 0;
+uint32_t lastBackgroundRefreshCheckMs = 0;
 uint32_t lastSuccessfulLoadMs = 0;
 uint32_t lastNtpSyncMs = 0;
 uint32_t lastBatterySampleMs = 0;
@@ -589,7 +591,7 @@ bool shouldPrefetchPage(int pageIndex) {
 }
 
 bool fetchPageToCacheOnly(int pageIndex) {
-  if (pageIndex <= 0 || pageIndex >= PAGE_COUNT) return false;
+  if (pageIndex < 0 || pageIndex >= PAGE_COUNT) return false;
 
   bool needNtp = (lastNtpSyncMs == 0) || ((millis() - lastNtpSyncMs) >= NTP_RESYNC_INTERVAL_MS);
   if (!ensureWiFiAndMaybeNtp(needNtp)) {
@@ -631,6 +633,86 @@ void prefetchPriorityPages() {
     }
     fetchPageToCacheOnly(pageIndex);
   }
+}
+
+bool refreshIndexCacheInBackground() {
+  if (!currentPolicy.allowAutoUpdate || !currentPolicy.allowInteractiveNetwork) {
+    return false;
+  }
+
+  String previousStatus = lastStatusText;
+  bool needNtp = (lastNtpSyncMs == 0) || ((millis() - lastNtpSyncMs) >= NTP_RESYNC_INTERVAL_MS);
+  if (!ensureWiFiAndMaybeNtp(needNtp)) {
+    Serial.println("Background refresh: Wi-Fi failed");
+    lastStatusText = previousStatus;
+    return false;
+  }
+
+  String remoteVersion;
+  bool versionOk = downloadIndexVersion(remoteVersion);
+  disconnectWiFi();
+
+  if (!versionOk) {
+    Serial.println("Background refresh: index.version failed");
+    lastStatusText = previousStatus;
+    return false;
+  }
+
+  Serial.printf("Background refresh: remote=%s local=%s\n",
+                remoteVersion.c_str(),
+                lastKnownIndexVersion.c_str());
+
+  bool versionChanged = (lastKnownIndexVersion.length() == 0 || remoteVersion != lastKnownIndexVersion);
+  if (!versionChanged && SD.exists(PAGE_CACHE_PATHS[0])) {
+    Serial.println("Background refresh: index unchanged");
+    lastStatusText = previousStatus;
+    return true;
+  }
+
+  persistIndexVersion(remoteVersion);
+  invalidateAllDetailCaches();
+
+  if (!fetchPageToCacheOnly(0)) {
+    Serial.println("Background refresh: index fetch failed");
+    lastStatusText = previousStatus;
+    return false;
+  }
+
+  if (versionChanged) {
+    prefetchPriorityPages();
+  }
+
+  if (currentPage == 0) {
+    renderFromCache(0);
+    lastStatusText = "LIVE";
+    drawOverlayStatusBar();
+  } else {
+    lastStatusText = previousStatus;
+  }
+
+  updateLastSuccessStamp();
+  printCounters();
+  return true;
+}
+
+void runPeriodicIndexRefreshIfDue() {
+  if (!currentPolicy.allowAutoUpdate) {
+    return;
+  }
+
+  uint32_t now = millis();
+  if (lastBackgroundRefreshCheckMs != 0 &&
+      (now - lastBackgroundRefreshCheckMs < getCurrentRefreshIntervalMs())) {
+    return;
+  }
+
+  if (pageLoaded &&
+      (now - lastUserActivityMs < BACKGROUND_REFRESH_IDLE_GRACE_MS)) {
+    return;
+  }
+
+  lastBackgroundRefreshCheckMs = now;
+  refreshIndexCacheInBackground();
 }
 
 bool canUseNetworkForCurrentSession() {
@@ -1194,6 +1276,7 @@ void runWakeFlow() {
   }
 
   noteUserActivity();
+  lastBackgroundRefreshCheckMs = millis();
 }
 
 void setup() {
@@ -1236,6 +1319,8 @@ void loop() {
   if (lastBatterySampleMs != beforeSample && pageLoaded) {
     drawOverlayStatusBar();
   }
+
+  runPeriodicIndexRefreshIfDue();
 
   if (pageLoaded && (millis() - lastUserActivityMs >= currentPolicy.idleSleepMs)) {
     lastStatusText = "IDLE";
