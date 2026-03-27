@@ -62,6 +62,9 @@ static constexpr int SWIPE_THRESHOLD_Y = 80;
 // タップ判定
 static constexpr int TAP_THRESHOLD_X = 18;
 static constexpr int TAP_THRESHOLD_Y = 18;
+static constexpr int BOTTOM_EDGE_ZONE_H = 120;
+static constexpr int BOTTOM_EDGE_SWIPE_UP_MIN_Y = 140;
+static constexpr int BOTTOM_EDGE_SWIPE_UP_MAX_X = 80;
 
 static constexpr int MANUAL_REFRESH_ZONE_W = 140;
 static constexpr int MANUAL_REFRESH_ZONE_H = 100;
@@ -141,6 +144,7 @@ int currentPage = 0;
 
 // タッチ追跡
 bool touchTracking = false;
+bool touchStartedAtBottomEdge = false;
 int touchStartX = 0;
 int touchStartY = 0;
 
@@ -876,16 +880,34 @@ bool isShortTap(int dx, int dy) {
   return (abs(dx) <= TAP_THRESHOLD_X && abs(dy) <= TAP_THRESHOLD_Y);
 }
 
+bool isBottomEdgeStart(int y) {
+  return y >= (M5.Display.height() - BOTTOM_EDGE_ZONE_H);
+}
+
+bool isBottomEdgeSwipeUp(int dx, int dy) {
+  if (!touchStartedAtBottomEdge) {
+    return false;
+  }
+
+  return (abs(dx) <= BOTTOM_EDGE_SWIPE_UP_MAX_X &&
+          dy <= -BOTTOM_EDGE_SWIPE_UP_MIN_Y);
+}
+
 void handleTouchInput() {
   auto t = M5.Touch.getDetail();
 
   if (t.wasPressed()) {
     touchTracking = true;
+    touchStartedAtBottomEdge = isBottomEdgeStart(t.y);
     touchStartX = t.x;
     touchStartY = t.y;
     noteUserActivity();
 
-    Serial.printf("Touch start: x=%d y=%d page=%d\n", touchStartX, touchStartY, currentPage);
+    Serial.printf("Touch start: x=%d y=%d page=%d bottomEdge=%s\n",
+                  touchStartX,
+                  touchStartY,
+                  currentPage,
+                  touchStartedAtBottomEdge ? "true" : "false");
     return;
   }
 
@@ -923,6 +945,12 @@ void handleTouchInput() {
       }
     }
 
+    if (isBottomEdgeSwipeUp(dx, dy)) {
+      Serial.println("Bottom-edge swipe up -> index");
+      jumpToIndexPage();
+      return;
+    }
+
     if (abs(dx) >= SWIPE_THRESHOLD_X && abs(dy) <= SWIPE_THRESHOLD_Y) {
       if (dx < 0) {
         Serial.println("Swipe left -> next page");
@@ -934,6 +962,8 @@ void handleTouchInput() {
     } else {
       Serial.println("Touch ignored");
     }
+
+    touchStartedAtBottomEdge = false;
   }
 }
 
