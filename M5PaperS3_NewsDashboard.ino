@@ -48,6 +48,7 @@ static constexpr uint32_t REFRESH_MS_CRITICAL = 120UL * 60UL * 1000UL;
 
 static constexpr uint32_t IDLE_SLEEP_MS = 90UL * 1000UL;
 static constexpr uint32_t IMMEDIATE_SLEEP_GRACE_MS = 1200UL;
+static constexpr uint32_t USER_WAKE_IDLE_SLEEP_MS = 45UL * 1000UL;
 
 // ジャイロ / 加速度で持ち上げ判定
 static constexpr float LIFT_ACCEL_DELTA_THRESHOLD = 0.18f;
@@ -181,6 +182,7 @@ String lastKnownIndexVersion = "";
 
 WakeContext currentWakeContext;
 PowerPolicy currentPolicy;
+esp_sleep_wakeup_cause_t rawWakeupCause = ESP_SLEEP_WAKEUP_UNDEFINED;
 
 void drawStatus(const String& msg) {
   M5.Display.fillScreen(TFT_WHITE);
@@ -949,6 +951,19 @@ bool isShortTap(int dx, int dy) {
   return (abs(dx) <= TAP_THRESHOLD_X && abs(dy) <= TAP_THRESHOLD_Y);
 }
 
+const char* getWakeReasonLabel(WakeReason reason) {
+  switch (reason) {
+    case WakeReason::ColdBoot:
+      return "coldboot";
+    case WakeReason::Timer:
+      return "timer";
+    case WakeReason::Touch:
+      return "touch";
+    default:
+      return "unknown";
+  }
+}
+
 bool isBottomEdgeStart(int y) {
   return y >= (M5.Display.height() - BOTTOM_EDGE_ZONE_H);
 }
@@ -1037,10 +1052,15 @@ void handleTouchInput() {
 }
 
 WakeReason getWakeReason() {
-  switch (esp_sleep_get_wakeup_cause()) {
+  rawWakeupCause = esp_sleep_get_wakeup_cause();
+
+  switch (rawWakeupCause) {
     case ESP_SLEEP_WAKEUP_TIMER:
       return WakeReason::Timer;
     case ESP_SLEEP_WAKEUP_TOUCHPAD:
+    case ESP_SLEEP_WAKEUP_EXT0:
+    case ESP_SLEEP_WAKEUP_EXT1:
+    case ESP_SLEEP_WAKEUP_GPIO:
       return WakeReason::Touch;
     case ESP_SLEEP_WAKEUP_UNDEFINED:
       return WakeReason::ColdBoot;
@@ -1096,11 +1116,13 @@ bool detectLiftEvent() {
 PowerPolicy decidePowerPolicy(const WakeContext& ctx) {
   PowerPolicy policy;
   policy.allowInteractiveNetwork = !(ctx.batteryProfile == BatteryProfile::Critical && !ctx.usbPowered);
+  bool userWake = (ctx.reason == WakeReason::Touch);
 
   if (ctx.usbPowered) {
     policy.wakeIntervalMs = REFRESH_MS_HIGH;
     policy.allowAutoUpdate = true;
     policy.keepAwake = true;
+    policy.idleSleepMs = userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS;
     policy.statusCode = "USB";
     policy.reasonText = "usb-powered";
     return policy;
@@ -1117,8 +1139,9 @@ PowerPolicy decidePowerPolicy(const WakeContext& ctx) {
   }
 
   policy.wakeIntervalMs = (ctx.batteryProfile == BatteryProfile::Low) ? REFRESH_MS_LOW : REFRESH_MS_MID;
+  policy.idleSleepMs = userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS;
 
-  if (ctx.reason == WakeReason::Timer && !ctx.motionDetected) {
+  if (!userWake && ctx.reason == WakeReason::Timer && !ctx.motionDetected) {
     policy.allowAutoUpdate = false;
     policy.keepAwake = false;
     policy.statusCode = "SLEEP";
@@ -1179,14 +1202,16 @@ void runWakeFlow() {
   lastStatusText = String(currentPolicy.statusCode);
 
   Serial.printf(
-    "WakeFlow: boot=%lu reason=%d usb=%s motion=%s battery=%d policy=%s interval=%lu\n",
+    "WakeFlow: boot=%lu reason=%s raw=%d usb=%s motion=%s battery=%d policy=%s interval=%lu idle=%lu\n",
     static_cast<unsigned long>(rtcBootCount),
-    static_cast<int>(currentWakeContext.reason),
+    getWakeReasonLabel(currentWakeContext.reason),
+    static_cast<int>(rawWakeupCause),
     currentWakeContext.usbPowered ? "true" : "false",
     currentWakeContext.motionDetected ? "true" : "false",
     static_cast<int>(currentWakeContext.batteryProfile),
     currentPolicy.reasonText,
-    static_cast<unsigned long>(currentPolicy.wakeIntervalMs)
+    static_cast<unsigned long>(currentPolicy.wakeIntervalMs),
+    static_cast<unsigned long>(currentPolicy.idleSleepMs)
   );
 
   bool haveIndexCache = SD.exists(PAGE_CACHE_PATHS[0]);
