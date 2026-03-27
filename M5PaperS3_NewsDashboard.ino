@@ -1227,6 +1227,7 @@ void runWakeFlow() {
   currentWakeContext.motionDetected = currentWakeContext.usbPowered || detectLiftEvent();
   currentPolicy = decidePowerPolicy(currentWakeContext);
   lastStatusText = String(currentPolicy.statusCode);
+  bool buttonWake = (currentWakeContext.reason == WakeReason::Button);
 
   Serial.printf(
     "WakeFlow: boot=%lu reason=%s raw=%d usb=%s motion=%s battery=%d policy=%s interval=%lu idle=%lu\n",
@@ -1244,6 +1245,10 @@ void runWakeFlow() {
   bool haveIndexCache = SD.exists(PAGE_CACHE_PATHS[0]);
   if (haveIndexCache) {
     renderCachedIndexIfAvailable();
+    if (buttonWake) {
+      lastStatusText = "READY";
+      drawOverlayStatusBar();
+    }
   }
 
   if (!haveIndexCache && currentPolicy.allowInteractiveNetwork) {
@@ -1252,7 +1257,11 @@ void runWakeFlow() {
   }
 
   if (currentPolicy.allowAutoUpdate) {
-    drawStatus("Checking updates...");
+    if (!buttonWake || !haveIndexCache) {
+      drawStatus("Checking updates...");
+    } else {
+      Serial.println("Button wake: keep cached index visible during refresh");
+    }
     if (!loadPage(0, true, false)) {
       Serial.println("Wake flow update failed");
       if (!pageLoaded && haveIndexCache) {
