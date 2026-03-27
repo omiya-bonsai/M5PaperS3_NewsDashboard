@@ -1,0 +1,19 @@
+config.h
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100/
+.Trashes/
+
+# Arduino IDE / arduino-cli local build artifacts
+build/
+dist/
+*.elf
+*.bin
+*.hex
+*.map
+*.partitions.bin
+*.bootloader.bin
