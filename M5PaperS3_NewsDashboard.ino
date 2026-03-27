@@ -357,6 +357,7 @@ void noteUserActivity() {
 
 void drawOverlayStatusBar() {
   static constexpr int BAR_H = 18;
+  static constexpr int CHAR_W = 6;
   const int y = M5.Display.height() - BAR_H;
   const int w = M5.Display.width();
 
@@ -370,13 +371,13 @@ void drawOverlayStatusBar() {
   M5.Display.print(leftText);
 
   String centerText = lastStatusText + " " + getRefreshIntervalLabel();
-  int centerWidth = centerText.length() * 6;
+  int centerWidth = centerText.length() * CHAR_W;
   int centerX = (w - centerWidth) / 2;
   M5.Display.setCursor(centerX, y + 5);
   M5.Display.print(centerText);
 
   String rightText = "P" + String(currentPage) + "/" + String(PAGE_COUNT - 1) + " " + getBatteryLabel();
-  int rightWidth = rightText.length() * 6 + 8;
+  int rightWidth = static_cast<int>(M5.Display.textWidth(rightText.c_str())) + 8;
   int rightX = w - rightWidth - 4;
 
   if (isLowBattery()) {
