@@ -70,6 +70,10 @@ static constexpr int BOTTOM_EDGE_SWIPE_UP_MAX_X = 80;
 
 static constexpr int MANUAL_REFRESH_ZONE_W = 140;
 static constexpr int MANUAL_REFRESH_ZONE_H = 100;
+static constexpr int WAKE_GUIDE_X = 18;
+static constexpr int WAKE_GUIDE_Y = 900;
+static constexpr int WAKE_GUIDE_ARROW_X = 280;
+static constexpr int WAKE_GUIDE_ARROW_Y = 915;
 
 // タイトルタップ領域
 static constexpr int TITLE_TAP_X_MIN = 0;
@@ -398,6 +402,25 @@ void drawOverlayStatusBar() {
   M5.Display.display();
 }
 
+void drawWakeGuide() {
+  if (currentPage != 0) {
+    return;
+  }
+
+  M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+  M5.Display.setTextSize(2);
+  M5.Display.setCursor(WAKE_GUIDE_X, WAKE_GUIDE_Y);
+  M5.Display.print("PRESS TO WAKE");
+
+  M5.Display.drawFastHLine(WAKE_GUIDE_ARROW_X, WAKE_GUIDE_ARROW_Y, 130, TFT_BLACK);
+  M5.Display.drawLine(WAKE_GUIDE_ARROW_X + 130, WAKE_GUIDE_ARROW_Y,
+                      WAKE_GUIDE_ARROW_X + 112, WAKE_GUIDE_ARROW_Y - 12, TFT_BLACK);
+  M5.Display.drawLine(WAKE_GUIDE_ARROW_X + 130, WAKE_GUIDE_ARROW_Y,
+                      WAKE_GUIDE_ARROW_X + 112, WAKE_GUIDE_ARROW_Y + 12, TFT_BLACK);
+  M5.Display.fillCircle(WAKE_GUIDE_ARROW_X + 144, WAKE_GUIDE_ARROW_Y, 4, TFT_BLACK);
+  M5.Display.display();
+}
+
 void disconnectWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.println("Wi-Fi disconnect");
@@ -708,6 +731,7 @@ bool renderPng(const char* path) {
   }
 
   drawOverlayStatusBar();
+  drawWakeGuide();
   return true;
 }
 
