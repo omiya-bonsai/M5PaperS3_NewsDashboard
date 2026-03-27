@@ -1158,7 +1158,6 @@ void enterTimedSleep(const char* reason) {
 
   disconnectWiFi();
   delay(50);
-  M5.Display.display();
   M5.Power.deepSleep(static_cast<uint64_t>(sleepMs) * 1000ULL, true);
   while (true) {
     delay(1000);
@@ -1267,8 +1266,6 @@ void loop() {
   }
 
   if (pageLoaded && (millis() - lastUserActivityMs >= currentPolicy.idleSleepMs)) {
-    lastStatusText = "SLEEP";
-    drawOverlayStatusBar();
     delay(150);
     enterTimedSleep("idle-timeout");
   }
