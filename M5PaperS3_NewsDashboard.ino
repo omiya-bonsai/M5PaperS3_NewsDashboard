@@ -49,6 +49,7 @@ static constexpr uint32_t REFRESH_MS_CRITICAL = 120UL * 60UL * 1000UL;
 static constexpr uint32_t IDLE_SLEEP_MS = 90UL * 1000UL;
 static constexpr uint32_t IMMEDIATE_SLEEP_GRACE_MS = 1200UL;
 static constexpr uint32_t USER_WAKE_IDLE_SLEEP_MS = 45UL * 1000UL;
+static constexpr uint32_t BUTTON_WAKE_IDLE_SLEEP_MS = 60UL * 1000UL;
 
 // ジャイロ / 加速度で持ち上げ判定
 static constexpr float LIFT_ACCEL_DELTA_THRESHOLD = 0.18f;
@@ -109,6 +110,7 @@ static constexpr uint32_t BATTERY_SAMPLE_INTERVAL_MS = 5UL * 60UL * 1000UL;
 enum class WakeReason {
   ColdBoot,
   Timer,
+  Button,
   Touch,
   Unknown
 };
@@ -957,11 +959,20 @@ const char* getWakeReasonLabel(WakeReason reason) {
       return "coldboot";
     case WakeReason::Timer:
       return "timer";
+    case WakeReason::Button:
+      return "button";
     case WakeReason::Touch:
       return "touch";
     default:
       return "unknown";
   }
+}
+
+bool isPhysicalWakeButtonActive() {
+  return M5.BtnPWR.isPressed()
+      || M5.BtnPWR.wasPressed()
+      || M5.BtnPWR.wasClicked()
+      || M5.BtnPWR.wasHold();
 }
 
 bool isBottomEdgeStart(int y) {
@@ -1061,10 +1072,19 @@ WakeReason getWakeReason() {
     case ESP_SLEEP_WAKEUP_EXT0:
     case ESP_SLEEP_WAKEUP_EXT1:
     case ESP_SLEEP_WAKEUP_GPIO:
+      if (isPhysicalWakeButtonActive()) {
+        return WakeReason::Button;
+      }
       return WakeReason::Touch;
     case ESP_SLEEP_WAKEUP_UNDEFINED:
+      if (isPhysicalWakeButtonActive()) {
+        return WakeReason::Button;
+      }
       return WakeReason::ColdBoot;
     default:
+      if (isPhysicalWakeButtonActive()) {
+        return WakeReason::Button;
+      }
       return WakeReason::Unknown;
   }
 }
@@ -1117,12 +1137,14 @@ PowerPolicy decidePowerPolicy(const WakeContext& ctx) {
   PowerPolicy policy;
   policy.allowInteractiveNetwork = !(ctx.batteryProfile == BatteryProfile::Critical && !ctx.usbPowered);
   bool userWake = (ctx.reason == WakeReason::Touch);
+  bool buttonWake = (ctx.reason == WakeReason::Button);
 
   if (ctx.usbPowered) {
     policy.wakeIntervalMs = REFRESH_MS_HIGH;
     policy.allowAutoUpdate = true;
     policy.keepAwake = true;
-    policy.idleSleepMs = userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS;
+    policy.idleSleepMs = buttonWake ? BUTTON_WAKE_IDLE_SLEEP_MS
+                                    : (userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS);
     policy.statusCode = "USB";
     policy.reasonText = "usb-powered";
     return policy;
@@ -1132,16 +1154,18 @@ PowerPolicy decidePowerPolicy(const WakeContext& ctx) {
     policy.wakeIntervalMs = REFRESH_MS_CRITICAL;
     policy.allowAutoUpdate = false;
     policy.allowInteractiveNetwork = false;
-    policy.keepAwake = false;
-    policy.statusCode = "BCRIT";
-    policy.reasonText = "critical-battery";
+    policy.keepAwake = buttonWake;
+    policy.idleSleepMs = buttonWake ? BUTTON_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS;
+    policy.statusCode = buttonWake ? "BTN" : "BCRIT";
+    policy.reasonText = buttonWake ? "button-critical" : "critical-battery";
     return policy;
   }
 
   policy.wakeIntervalMs = (ctx.batteryProfile == BatteryProfile::Low) ? REFRESH_MS_LOW : REFRESH_MS_MID;
-  policy.idleSleepMs = userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS;
+  policy.idleSleepMs = buttonWake ? BUTTON_WAKE_IDLE_SLEEP_MS
+                                  : (userWake ? USER_WAKE_IDLE_SLEEP_MS : IDLE_SLEEP_MS);
 
-  if (!userWake && ctx.reason == WakeReason::Timer && !ctx.motionDetected) {
+  if (!buttonWake && !userWake && ctx.reason == WakeReason::Timer && !ctx.motionDetected) {
     policy.allowAutoUpdate = false;
     policy.keepAwake = false;
     policy.statusCode = "SLEEP";
@@ -1149,10 +1173,13 @@ PowerPolicy decidePowerPolicy(const WakeContext& ctx) {
     return policy;
   }
 
-  policy.allowAutoUpdate = true;
+  policy.allowAutoUpdate = policy.allowInteractiveNetwork;
   policy.keepAwake = true;
 
-  if (ctx.reason == WakeReason::Timer) {
+  if (ctx.reason == WakeReason::Button) {
+    policy.statusCode = "BTN";
+    policy.reasonText = "button-wake";
+  } else if (ctx.reason == WakeReason::Timer) {
     policy.statusCode = "WAKE";
     policy.reasonText = "timer-motion";
   } else if (ctx.reason == WakeReason::Touch) {
@@ -1260,6 +1287,7 @@ void setup() {
   delay(1000);
 
   M5.Display.setRotation(0);
+  M5.update();
 
   restorePersistedState();
   sampleBatteryIfNeeded(true);
