@@ -139,6 +139,7 @@ RTC_DATA_ATTR uint32_t rtcBootCount = 0;
 RTC_DATA_ATTR uint32_t rtcLastSuccessEpoch = 0;
 RTC_DATA_ATTR char rtcLastSuccessTextStore[24] = "--:--";
 RTC_DATA_ATTR char rtcLastKnownIndexVersionStore[32] = "";
+RTC_DATA_ATTR int rtcLastViewedDetailPage = 1;
 
 int currentPage = 0;
 
@@ -230,6 +231,12 @@ void restorePersistedState() {
 void persistIndexVersion(const String& version) {
   lastKnownIndexVersion = version;
   strlcpy(rtcLastKnownIndexVersionStore, version.c_str(), sizeof(rtcLastKnownIndexVersionStore));
+}
+
+void persistLastViewedDetailPage(int pageIndex) {
+  if (pageIndex >= 1 && pageIndex < PAGE_COUNT) {
+    rtcLastViewedDetailPage = pageIndex;
+  }
 }
 
 void updateLastSuccessStamp() {
@@ -569,6 +576,63 @@ bool downloadIndexVersion(String& outVersion) {
   return true;
 }
 
+bool shouldPrefetchDetailsForCurrentPolicy() {
+  return currentPolicy.allowInteractiveNetwork &&
+         currentWakeContext.batteryProfile == BatteryProfile::Normal &&
+         !currentWakeContext.usbPowered;
+}
+
+bool shouldPrefetchPage(int pageIndex) {
+  if (pageIndex <= 0 || pageIndex >= PAGE_COUNT) return false;
+  if (!shouldPrefetchDetailsForCurrentPolicy()) return false;
+  return !isPageCacheValid(pageIndex);
+}
+
+bool fetchPageToCacheOnly(int pageIndex) {
+  if (pageIndex <= 0 || pageIndex >= PAGE_COUNT) return false;
+
+  bool needNtp = (lastNtpSyncMs == 0) || ((millis() - lastNtpSyncMs) >= NTP_RESYNC_INTERVAL_MS);
+  if (!ensureWiFiAndMaybeNtp(needNtp)) {
+    Serial.printf("Prefetch: Wi-Fi failed for page %d\n", pageIndex);
+    return false;
+  }
+
+  bool ok = true;
+  if (!downloadBinaryToSD(PAGE_URLS[pageIndex], DL_PNG_PATH)) {
+    Serial.printf("Prefetch: download failed for page %d\n", pageIndex);
+    ok = false;
+  } else if (!replacePageCacheFromDownload(pageIndex)) {
+    Serial.printf("Prefetch: replace failed for page %d\n", pageIndex);
+    ok = false;
+  }
+
+  disconnectWiFi();
+
+  if (!ok) {
+    invalidatePageCache(pageIndex);
+    return false;
+  }
+
+  Serial.printf("Prefetch: page %d cached\n", pageIndex);
+  return true;
+}
+
+void prefetchPriorityPages() {
+  if (!shouldPrefetchDetailsForCurrentPolicy()) {
+    return;
+  }
+
+  int candidates[2] = {1, rtcLastViewedDetailPage};
+  for (int i = 0; i < 2; ++i) {
+    int pageIndex = candidates[i];
+    bool duplicate = (i > 0 && pageIndex == candidates[0]);
+    if (duplicate || !shouldPrefetchPage(pageIndex)) {
+      continue;
+    }
+    fetchPageToCacheOnly(pageIndex);
+  }
+}
+
 bool canUseNetworkForCurrentSession() {
   if (currentPolicy.allowInteractiveNetwork) {
     return true;
@@ -613,8 +677,12 @@ bool shouldSkipIndexDownloadByVersion(bool forceRefresh) {
     return true;
   }
 
+  bool versionChanged = (lastKnownIndexVersion.length() == 0 || remoteVersion != lastKnownIndexVersion);
   persistIndexVersion(remoteVersion);
   invalidateAllDetailCaches();
+  if (versionChanged) {
+    prefetchPriorityPages();
+  }
   return false;
 }
 
@@ -754,6 +822,7 @@ bool loadPage(int pageIndex, bool showStatusOnFailure = true, bool forceRefresh 
   updateLastSuccessStamp();
   lastStatusText = "LIVE";
   noteUserActivity();
+  persistLastViewedDetailPage(pageIndex);
 
   drawOverlayStatusBar();
 
