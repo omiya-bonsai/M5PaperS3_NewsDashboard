@@ -412,10 +412,13 @@ void drawReadStateHeaderLabel() {
   int boxW = textWidth + (PAD_X * 2);
   int boxX = M5.Display.width() - boxW - MARGIN_RIGHT;
   int boxY = MARGIN_TOP;
+  bool unread = hasUnreadContent();
 
-  M5.Display.fillRoundRect(boxX, boxY, boxW, BOX_H, 4, TFT_WHITE);
-  M5.Display.drawRoundRect(boxX, boxY, boxW, BOX_H, 4, TFT_BLACK);
-  M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+  M5.Display.fillRoundRect(boxX, boxY, boxW, BOX_H, 4, unread ? TFT_BLACK : TFT_WHITE);
+  if (!unread) {
+    M5.Display.drawRoundRect(boxX, boxY, boxW, BOX_H, 4, TFT_BLACK);
+  }
+  M5.Display.setTextColor(unread ? TFT_WHITE : TFT_BLACK, unread ? TFT_BLACK : TFT_WHITE);
   M5.Display.setCursor(boxX + PAD_X, boxY + PAD_Y);
   M5.Display.print(label);
   M5.Display.setTextSize(1);
