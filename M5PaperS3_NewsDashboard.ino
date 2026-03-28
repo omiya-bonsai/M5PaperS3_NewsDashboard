@@ -411,7 +411,6 @@ bool connectWiFiBlocking(uint32_t timeoutMs = 15000UL) {
   }
 
   Serial.println("Wi-Fi connecting...");
-  drawStatus("Wi-Fi connecting...");
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
@@ -861,6 +860,8 @@ bool loadPage(int pageIndex, bool showStatusOnFailure = true, bool forceRefresh 
     }
     if (showStatusOnFailure && !pageLoaded) {
       drawStatus("Power-save: network blocked");
+    } else if (pageLoaded) {
+      drawOverlayStatusBar();
     }
     return false;
   }
@@ -871,6 +872,8 @@ bool loadPage(int pageIndex, bool showStatusOnFailure = true, bool forceRefresh 
     Serial.printf("loadPage: Wi-Fi failed for page %d\n", pageIndex);
     if (showStatusOnFailure && !pageLoaded) {
       drawStatus(String("Wi-Fi failed: page ") + String(pageIndex));
+    } else if (pageLoaded) {
+      drawOverlayStatusBar();
     }
     return false;
   }
@@ -894,6 +897,8 @@ bool loadPage(int pageIndex, bool showStatusOnFailure = true, bool forceRefresh 
     invalidatePageCache(pageIndex);
     if (showStatusOnFailure && !pageLoaded) {
       drawStatus(String("Load failed: page ") + String(pageIndex));
+    } else if (pageLoaded) {
+      drawOverlayStatusBar();
     }
     return false;
   }
