@@ -140,6 +140,7 @@ RTC_DATA_ATTR uint32_t rtcBootCount = 0;
 RTC_DATA_ATTR uint32_t rtcLastSuccessEpoch = 0;
 RTC_DATA_ATTR char rtcLastSuccessTextStore[24] = "--:--";
 RTC_DATA_ATTR char rtcLastKnownIndexVersionStore[32] = "";
+RTC_DATA_ATTR char rtcLastReadIndexVersionStore[32] = "";
 RTC_DATA_ATTR int rtcLastViewedDetailPage = 1;
 
 int currentPage = 0;
@@ -180,6 +181,7 @@ float cachedBatteryVoltage = 0.0f;
 
 // index.version
 String lastKnownIndexVersion = "";
+String lastReadIndexVersion = "";
 
 WakeContext currentWakeContext;
 PowerPolicy currentPolicy;
@@ -227,11 +229,43 @@ void restorePersistedState() {
   if (rtcLastKnownIndexVersionStore[0] != '\0') {
     lastKnownIndexVersion = String(rtcLastKnownIndexVersionStore);
   }
+  if (rtcLastReadIndexVersionStore[0] != '\0') {
+    lastReadIndexVersion = String(rtcLastReadIndexVersionStore);
+  }
 }
 
 void persistIndexVersion(const String& version) {
   lastKnownIndexVersion = version;
   strlcpy(rtcLastKnownIndexVersionStore, version.c_str(), sizeof(rtcLastKnownIndexVersionStore));
+}
+
+void persistLastReadIndexVersion(const String& version) {
+  lastReadIndexVersion = version;
+  strlcpy(rtcLastReadIndexVersionStore, version.c_str(), sizeof(rtcLastReadIndexVersionStore));
+}
+
+bool hasUnreadContent() {
+  return lastKnownIndexVersion.length() > 0 &&
+         lastKnownIndexVersion != lastReadIndexVersion;
+}
+
+String getReadStateLabel() {
+  if (lastKnownIndexVersion.length() == 0) {
+    return "READ?";
+  }
+  return hasUnreadContent() ? "NEW" : "READ";
+}
+
+void markCurrentVersionRead() {
+  if (lastKnownIndexVersion.length() == 0) {
+    return;
+  }
+  if (lastReadIndexVersion == lastKnownIndexVersion) {
+    return;
+  }
+
+  persistLastReadIndexVersion(lastKnownIndexVersion);
+  Serial.printf("Marked version as read: %s\n", lastReadIndexVersion.c_str());
 }
 
 void persistLastViewedDetailPage(int pageIndex) {
@@ -372,7 +406,7 @@ void drawOverlayStatusBar() {
   M5.Display.setCursor(6, y + 5);
   M5.Display.print(leftText);
 
-  String centerText = lastStatusText + " " + getRefreshIntervalLabel();
+  String centerText = lastStatusText + " " + getRefreshIntervalLabel() + " " + getReadStateLabel();
   int centerWidth = centerText.length() * CHAR_W;
   int centerX = (w - centerWidth) / 2;
   M5.Display.setCursor(centerX, y + 5);
@@ -1083,12 +1117,14 @@ void handleTouchInput() {
                   endX, endY, dx, dy, tapX, tapY);
 
     if (isShortTap(dx, dy) && isManualRefreshTap(tapX, tapY)) {
+      markCurrentVersionRead();
       Serial.println("Top-right tap -> manual refresh");
       manualRefreshCurrentPage();
       return;
     }
 
     if (isShortTap(dx, dy) && isTitleTap(tapX, tapY)) {
+      markCurrentVersionRead();
       jumpToIndexPage();
       return;
     }
@@ -1096,18 +1132,21 @@ void handleTouchInput() {
     if (currentPage == 0 && isShortTap(dx, dy)) {
       int tappedHeadline = getTappedHeadlineIndex(tapX, tapY);
       if (tappedHeadline >= 0) {
+        markCurrentVersionRead();
         jumpFromHeadlineTap(tappedHeadline + 1);
         return;
       }
     }
 
     if (isBottomEdgeSwipeUp(dx, dy)) {
+      markCurrentVersionRead();
       Serial.println("Bottom-edge swipe up -> index");
       jumpToIndexPage();
       return;
     }
 
     if (abs(dx) >= SWIPE_THRESHOLD_X && abs(dy) <= SWIPE_THRESHOLD_Y) {
+      markCurrentVersionRead();
       if (dx < 0) {
         Serial.println("Swipe left -> next page");
         nextPage();
