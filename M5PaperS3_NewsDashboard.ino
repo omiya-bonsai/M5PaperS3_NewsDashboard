@@ -391,6 +391,36 @@ void noteUserActivity() {
   lastUserActivityMs = millis();
 }
 
+String getCurrentPageLabel() {
+  if (currentPage == 0) {
+    return "index";
+  }
+  return "page" + String(currentPage);
+}
+
+void drawReadStateHeaderLabel() {
+  static constexpr int PAD_X = 10;
+  static constexpr int PAD_Y = 6;
+  static constexpr int MARGIN_TOP = 10;
+  static constexpr int MARGIN_RIGHT = 12;
+  static constexpr int BOX_H = 28;
+
+  String label = getCurrentPageLabel() + " " + getReadStateLabel();
+
+  M5.Display.setTextSize(2);
+  int textWidth = static_cast<int>(M5.Display.textWidth(label.c_str()));
+  int boxW = textWidth + (PAD_X * 2);
+  int boxX = M5.Display.width() - boxW - MARGIN_RIGHT;
+  int boxY = MARGIN_TOP;
+
+  M5.Display.fillRoundRect(boxX, boxY, boxW, BOX_H, 4, TFT_WHITE);
+  M5.Display.drawRoundRect(boxX, boxY, boxW, BOX_H, 4, TFT_BLACK);
+  M5.Display.setTextColor(TFT_BLACK, TFT_WHITE);
+  M5.Display.setCursor(boxX + PAD_X, boxY + PAD_Y);
+  M5.Display.print(label);
+  M5.Display.setTextSize(1);
+}
+
 void drawOverlayStatusBar() {
   static constexpr int BAR_H = 18;
   static constexpr int CHAR_W = 6;
@@ -406,7 +436,7 @@ void drawOverlayStatusBar() {
   M5.Display.setCursor(6, y + 5);
   M5.Display.print(leftText);
 
-  String centerText = lastStatusText + " " + getRefreshIntervalLabel() + " " + getReadStateLabel();
+  String centerText = lastStatusText + " " + getRefreshIntervalLabel();
   int centerWidth = centerText.length() * CHAR_W;
   int centerX = (w - centerWidth) / 2;
   M5.Display.setCursor(centerX, y + 5);
@@ -427,6 +457,7 @@ void drawOverlayStatusBar() {
     M5.Display.print(rightText);
   }
 
+  drawReadStateHeaderLabel();
   M5.Display.display();
 }
 
