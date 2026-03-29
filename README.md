@@ -1,61 +1,61 @@
 # M5PaperS3 News Dashboard
 
-M5Stack M5PaperS3 で、HTTP 配信されるニュース PNG を表示する常時待機型ビューアです。
+Japanese: [README.ja.md](README.ja.md)
 
-このリポジトリは M5PaperS3 側の実装です。全体像は統合ハブ [m5papers3-news-system](https://github.com/omiya-bonsai/m5papers3-news-system)、Raspberry Pi 側は [news-png-generator](https://github.com/omiya-bonsai/news-png-generator) を参照してください。
+This repository contains the M5PaperS3-side implementation of the news dashboard. It displays PNG pages served over HTTP, keeps them on SD as cache, and updates only when `index.version` changes.
 
-## ジャンプリンク
+For the whole system, see the integration hub [m5papers3-news-system](https://github.com/omiya-bonsai/m5papers3-news-system). For the Raspberry Pi generation and serving side, see [news-png-generator](https://github.com/omiya-bonsai/news-png-generator).
 
-- 統合ハブ:
+## Quick Links
+
+- Integration hub:
   - [omiya-bonsai/m5papers3-news-system](https://github.com/omiya-bonsai/m5papers3-news-system)
-- Raspberry Pi 側:
+- Raspberry Pi server:
   - [omiya-bonsai/news-png-generator](https://github.com/omiya-bonsai/news-png-generator)
 
 ![M5PaperS3 device photo](img/01.jpeg)
 
-一覧ページ `index.png` と詳細ページ `page1.png` から `page6.png` を SD にキャッシュし、`index.version` の差分確認で不要な再取得を避けます。端末は常時起動のまま待機し、Wi-Fi は更新時だけ有効化します。
+## Features
 
-## 特徴
+- `index.version`-based diff checks
+- fast page display using SD cache
+- swipe and tap page navigation
+- periodic background `index` refresh while idle
+- priority prefetch for detail pages
+- `NEW / READ` state based on `index.version`
+- refresh policy changes depending on USB power and battery level
+- battery-aware update throttling
+- background refresh to reduce network waits during interaction
 
-- `index.version` による差分確認
-- SD キャッシュを使った高速ページ表示
-- スワイプとタップによるページ遷移
-- 待機中の定期 `index` 更新
-- 詳細ページの優先先読み
-- `index.version` 単位の `NEW / READ` 表示
-- USB 給電時 / バッテリー時での更新ポリシー切替
-- バッテリー残量に応じた省電力制御
-- 操作時の通信を減らすバックグラウンド更新構成
+Note: the detailed `docs/` files are currently written in Japanese.
 
-詳細仕様は [`docs/architecture.md`](docs/architecture.md) と [`docs/cache-and-refresh.md`](docs/cache-and-refresh.md) を参照してください。
+## Related Repositories
 
-## 関連リポジトリ
-
-- 統合ハブ:
+- Integration hub:
   - [omiya-bonsai/m5papers3-news-system](https://github.com/omiya-bonsai/m5papers3-news-system)
-- Raspberry Pi 側:
+- Raspberry Pi server:
   - [omiya-bonsai/news-png-generator](https://github.com/omiya-bonsai/news-png-generator)
 
-## 想定構成
+## Expected System Behavior
 
-配信側:
+Server side:
 
-- ニュース画像を生成
-- `index.version` を生成
-- HTTP で配信
+- generates news PNG pages
+- generates `index.version`
+- serves files over HTTP
 
-M5PaperS3 側:
+Device side:
 
-- 常時待機
-- USB 給電 / バッテリー状態を評価
-- 一定間隔で `index.version` を確認
-- 変更時のみ `index.png` を更新
-- 必要に応じて優先詳細ページを先読み
-- ユーザー操作時はキャッシュ優先で表示
+- stays awake in always-on mode
+- evaluates USB power and battery state
+- checks `index.version` at intervals
+- updates `index.png` only when needed
+- prefetches priority detail pages when appropriate
+- prefers cached pages during user interaction
 
-## 配信ファイル
+## Delivered Files
 
-取得対象は次の 8 ファイルです。
+The device expects these eight files:
 
 ```text
 index.png
@@ -68,69 +68,69 @@ page6.png
 index.version
 ```
 
-コード中の既定 URL は以下です。
+The current default URL in code is:
 
 ```text
 http://192.168.3.82:8010/index.png
 ```
 
-## 差分更新の流れ
+## Update Flow
 
-画像より先に `index.version` を確認します。
+The device checks `index.version` before it downloads images.
 
-1. `index.version` を取得
-2. 前回値と比較
-3. 同じなら `index.png` の再取得を省略
-4. 変化していれば `index.png` を更新
-5. 詳細ページキャッシュを無効化
+1. Fetch `index.version`
+2. Compare it with the previous value
+3. Skip `index.png` if unchanged
+4. Refresh `index.png` if changed
+5. Invalidate detail-page caches
 
-これにより通信量、消費電力、e-paper の更新回数を抑えます。
+This reduces network traffic, power consumption, and e-paper refreshes.
 
-## 更新アーキテクチャ
+## Refresh Architecture
 
-本体は「常時待機しつつ、待機中にキャッシュを育てる」構造です。
+The current design is "always on, but refresh in the background."
 
-基本フロー:
+Basic flow:
 
-1. 起動直後に `index` キャッシュを表示
-2. 必要なら `index.version` を確認して `index.png` を更新
-3. `index.version` が変わった時だけ詳細キャッシュを無効化
-4. 通常バッテリー時は `page1` と直近詳細ページを優先先読み
-5. 待機中は更新間隔ごとに `index.version` を再確認
-6. ユーザー操作時はキャッシュ優先で即表示
-7. Wi-Fi は更新時だけ ON/OFF
+1. Display the cached `index` page first
+2. Check `index.version` and refresh `index.png` only if needed
+3. Invalidate detail caches only when `index.version` changes
+4. Prefetch `page1` and the last-viewed detail page on normal battery
+5. Re-check `index.version` periodically while idle
+6. Prefer cached pages during user interaction
+7. Turn Wi-Fi on only for refresh work
 
-現在の実装ポリシー:
+Current policy:
 
-- USB 給電中は高頻度更新
-- 通常バッテリー時は中間頻度更新
-- 低残量時は更新間隔を延長
-- クリティカル時は自動更新を止める
-- 詳細ページ先読みは通常バッテリー時のみ有効
-- 操作直後 20 秒間はバックグラウンド更新を走らせない
+- more frequent refresh on USB power
+- medium refresh interval on normal battery
+- longer interval on low battery
+- stop automatic refresh on critical battery
+- detail-page prefetch only on normal battery
+- no background refresh for 20 seconds right after user interaction
 
-## 操作方法
+## Controls
 
-一覧画面:
+From the index page:
 
-- ヘッドラインをタップすると対応する詳細ページへ移動
+- tap a headline to open the matching detail page
 
-全画面共通:
+On all screens:
 
-- 左スワイプで次ページ
-- 右スワイプで前ページ
-- 画面最下部から上スワイプで一覧へ戻る
-- 右上タップで強制更新
+- swipe left for next page
+- swipe right for previous page
+- swipe up from the bottom edge to return to index
+- tap the top-right area to force refresh
 
-詳細画面:
+On detail pages:
 
-- タイトル付近をタップすると一覧へ戻る
+- tap near the title to return to index
 
-操作判定の詳細は [`docs/touch-gesture.md`](docs/touch-gesture.md) を参照してください。
+For touch details, see [`docs/touch-gesture.md`](docs/touch-gesture.md).
 
-## キャッシュ
+## Cache
 
-画像は SD カード直下に保存します。
+Files are stored at the root of the SD card:
 
 ```text
 /index.png
@@ -143,60 +143,50 @@ http://192.168.3.82:8010/index.png
 /index.version
 ```
 
-同一セッション中の再表示では、キャッシュが有効ならネットワークを使わずに描画します。
+If a cached page is still valid, it is shown without network access.
 
-詳細ページについては、`index.version` 更新時に通常バッテリー時のみ次を優先先読みします。
+On normal battery, the device also prefetches:
 
 - `page1.png`
-- 前回最後に見た詳細ページ
+- the last-viewed detail page
 
-これにより、ニュース閲覧中のページ遷移待ちを減らしつつ、全ページ常時先読みは避けています。
+This improves perceived responsiveness without prefetching every page all the time.
 
-また、待機中は更新間隔ごとに `index.version` を再確認し、変化があれば `index.png` を更新します。現在 `index` 表示中ならそのまま再描画し、詳細ページ表示中ならキャッシュだけ更新して画面は維持します。
+## Footer and Header UI
 
-## 画面下部の表示
+Footer:
 
-フッターには以下を表示します。
+- `LAST`: time of the last successful update
+- center: current status code and refresh interval
+- `Pn/6`: current page number
+- `BAT xx%`: battery level
+- `USB`: shown when USB power is detected
 
-- `LAST`: 最終成功更新時刻
-- 中央ステータス: 現在の状態コードと更新間隔
-- `Pn/6`: 現在ページ
-- `BAT xx%`: バッテリー残量
-- `USB`: USB 給電検出時に付与
+Read state:
 
-低残量時は右側表示を強調します。
+- `NEW` means the current `index.version` has not been acknowledged yet
+- `READ` means at least one valid action has occurred for the current `index.version`
+- the top-right label is emphasized with inverted colors when unread
 
-## 既読 / 未読表示
+For more UI details, see [`docs/display-ui.md`](docs/display-ui.md).
 
-既読状態は記事単位ではなく、現在の `index.version` 単位で管理します。
+## Wi-Fi and Time Sync
 
-- 新しい `index.version` を取り込むと右上ラベルが `NEW`
-- タップ、スワイプ、手動更新などの有効操作が一度でも入ると、その世代は `READ`
-- 次の新しい `index.version` が来たら再び `NEW`
+Wi-Fi is enabled only during refresh work and disconnected afterward.
 
-右上ラベルは `index NEW` や `page1 READ` のように表示され、未読時は黒地白文字で強調します。
-
-表示まわりの詳細は [`docs/display-ui.md`](docs/display-ui.md) を参照してください。
-
-## Wi-Fi と時刻同期
-
-Wi-Fi は更新時のみ有効化し、処理後に切断します。
-
-NTP サーバ:
+NTP servers:
 
 - `ntp.nict.jp`
 - `time.cloudflare.com`
 - `pool.ntp.org`
 
-用途:
+These are used to keep the `LAST` timestamp meaningful.
 
-- `LAST` 表示用の時刻取得
+## Setup
 
-## セットアップ
+### 1. Create `config.h`
 
-### 1. 設定ファイルを作成
-
-[`config.example.h`](config.example.h) を参考に、同じ内容で `config.h` を作成します。
+Use [`config.example.h`](config.example.h) as a template and create `config.h` with your own values.
 
 ```cpp
 #pragma once
@@ -205,37 +195,39 @@ static const char* WIFI_SSID     = "YOUR_WIFI_SSID";
 static const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 ```
 
-`config.h` は `.gitignore` に入っており、Git には含めません。
+`config.h` is ignored by Git and should not be committed.
 
-### 2. ライブラリ / ボード
+### 2. Required board and library
 
-- Arduino IDE または `arduino-cli`
-- M5PaperS3 ボード定義
+- Arduino IDE or `arduino-cli`
+- M5PaperS3 board support
 - `M5Unified`
 
-### 3. ビルド例
+### 3. Build example
 
 ```sh
 arduino-cli compile -b m5stack:esp32:m5stack_papers3 .
 ```
 
-## リポジトリ構成
+## Repository Contents
 
 ```text
 M5PaperS3_NewsDashboard.ino
 config.example.h
 README.md
+README.ja.md
+docs/
 ```
 
-## 備考
+## Notes
 
-- 現在の URL、更新間隔、しきい値はコード内定数です
-- 優先先読みは通常バッテリー時のみ有効です
-- 端末は deep sleep を使わず、常時待機のまま動作します
-- バッテリー表示は定期サンプリング値を使うため、USB 挿抜の反映に少し遅れます
-- 電源制御の詳細は [`docs/power-policy.md`](docs/power-policy.md) を参照してください
-- README は現行スケッチ実装に合わせて更新しています
+- URL values, thresholds, and intervals are currently code constants
+- priority prefetch is enabled only on normal battery
+- the device does not use deep sleep in the current implementation
+- battery display is based on sampled values, so USB plug/unplug changes can appear with a delay
+- power-control details are documented in [`docs/power-policy.md`](docs/power-policy.md)
+- real NHK content images should not be committed to this repository
 
 ## License
 
-このリポジトリは [MIT License](LICENSE) です。
+This repository is licensed under the [MIT License](LICENSE).
