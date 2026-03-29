@@ -15,6 +15,8 @@ For the whole system, see the integration hub [m5papers3-news-system](https://gi
 
 ![M5PaperS3 device photo](img/01.jpeg)
 
+![M5PaperS3 News System overview](img/01.en.png)
+
 ## Features
 
 - `index.version`-based diff checks
